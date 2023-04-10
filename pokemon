@@ -1,0 +1,414 @@
+<?php
+/**
+ * Pokédex
+ *
+ * @author Zachary Knudsen
+ * @copyright 2023 Zachary Knudsen
+ *
+ * @wordpress-plugin
+ * Plugin Name: Pokédex
+ * Author: Zachary Knudsen
+ * Description: Registers the custom post type "Pokémon" to WordPress.
+ * Requires at least: 6.2
+ * Requires PHP: >=8.2
+ * Text Domain: plugin-pokemon
+ * Version: 20240404.0.0
+ */
+
+ /**
+ * Abort early if this file is called directly.
+ */
+if ( ! defined( 'ABSPATH' ) )
+	exit;
+
+ if( !defined( 'PLUGIN_POKEDEX_VERSION' ) )
+	define( 'PLUGIN_POKEDEX_VERSION', '20240404.0.0' );
+
+register_activation_hook( __FILE__, array( 'Plugin_Pokedex', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'Plugin_Pokedex', 'deactivate' ) );
+
+/**
+ * Plugin singleton.
+ * @see https://github.com/norcross/wp-comment-notes/blob/master/wp-comment-notes.php
+ */
+class Plugin_Pokedex {
+	/**
+	 * Static property to hold our singleton instance.
+	 */
+	static $instance = false;
+
+	/**
+	 * Exhaustive list of all pokémon types.
+	 *
+	 * @todo Convert this to an enum.
+	 */
+	public static $pokemon_types = array(
+		'normal'   => "Normal",
+		'fire'     => "Fire",
+		'water'    => "Water",
+		'electric' => "Electric",
+		'grass'    => "Grass",
+		'ice'      => "Ice",
+		'fighting' => "Fighting",
+		'poison'   => "Poison",
+		'ground'   => "Ground",
+		'flying'   => "Flying",
+		'psychic'  => "Psychic",
+		'bug'      => "Bug",
+		'rock'     => "Rock",
+		'ghost'    => "Ghost",
+		'dragon'   => "Dragon",
+		'dark'     => "Dark",
+		'steel'    => "Steel",
+		'fairy'    => "Fairy",
+	);
+
+	/**
+	 * Constructor.
+	 *
+	 * @return void
+	 */
+	private function __construct() {
+		add_action( 'init', array( $this, 'register_post_type_pokemon' ), 0 );
+		add_action( 'save_post', array( $this, 'save_pokemon' ) );
+
+		add_action( 'add_meta_boxes', function () {
+			add_meta_box(
+				'pokemon_pokedex_meta_box',
+				_x( 'Pokémon Stats', 'meta box title', 'plugin-pokemon' ),
+				array( $this, 'render_pokemon_pokedex_meta_box_content' ),
+				'pokemon',
+				'side'
+			);
+
+			add_meta_box(
+				'pokemon_types_meta_box',
+				_x( 'Pokémon Type', 'meta box title', 'plugin-pokemon' ),
+				array( $this, 'render_pokemon_type_meta_box_content' ),
+				'pokemon',
+				'side'
+			);
+
+			add_meta_box(
+				'pokemon_stats_meta_box',
+				_x( 'Pokémon Stats', 'meta box title', 'plugin-pokemon' ),
+				array( $this, 'render_pokemon_stats_meta_box_content' ),
+				'pokemon',
+				'side'
+			);
+		} );
+
+		if (! is_admin() ) :
+		add_action( 'init', array( $this, 'register_pokemon_pokdex_number__old_meta' ) );
+		add_action( 'init', array( $this, 'register_pokemon_pokdex_number__new_meta' ) );
+		add_action( 'init', array( $this, 'register_pokemon_type_primary_meta' ) );
+		add_action( 'init', array( $this, 'register_pokemon_type_secondary_meta' ) );
+		add_action( 'init', array( $this, 'register_pokemon_weight_meta' ) );
+		endif;
+	}
+
+	/**
+	* If an instance exists, this returns it.  If not, it creates one and returns it.
+	*
+	* @return Plugin_Pokedex
+	*/
+   public static function get_instance() {
+	   if ( !self::$instance )
+		   self::$instance = new self;
+	   return self::$instance;
+   }
+
+	/**
+	 * Register custom post type: Pokémon
+	 */
+	static function register_post_type_pokemon() {
+		$menu_icon = file_get_contents( plugin_dir_path( __FILE__ ) . 'assets/pokeball.svg' );
+
+		$labels = array(
+			'name'                  => _x( 'Pokémon', 'Post Type General Name', 'plugin-pokemon' ),
+			'singular_name'         => _x( 'Pokémon', 'Post Type Singular Name', 'plugin-pokemon' ),
+			'menu_name'             => __( 'Pokémon', 'plugin-pokemon' ),
+			'name_admin_bar'        => __( 'Pokémon', 'plugin-pokemon' ),
+			'archives'              => __( 'Pokémon Archives', 'plugin-pokemon' ),
+			'attributes'            => __( 'Pokémon Attributes', 'plugin-pokemon' ),
+			'parent_item_colon'     => __( 'Parent Pokémon:', 'plugin-pokemon' ),
+			'all_items'             => __( 'All Pokémon', 'plugin-pokemon' ),
+			'add_new_item'          => __( 'Add New Pokémon', 'plugin-pokemon' ),
+			'add_new'               => __( 'Add New', 'plugin-pokemon' ),
+			'new_item'              => __( 'New Pokémon', 'plugin-pokemon' ),
+			'edit_item'             => __( 'Edit Pokémon', 'plugin-pokemon' ),
+			'update_item'           => __( 'Update Pokémon', 'plugin-pokemon' ),
+			'view_item'             => __( 'View Pokémon', 'plugin-pokemon' ),
+			'view_items'            => __( 'View Pokémon', 'plugin-pokemon' ),
+			'search_items'          => __( 'Search Pokémon', 'plugin-pokemon' ),
+			'not_found'             => __( 'Not found', 'plugin-pokemon' ),
+			'not_found_in_trash'    => __( 'Not found in Trash', 'plugin-pokemon' ),
+			'featured_image'        => __( 'Featured Image', 'plugin-pokemon' ),
+			'set_featured_image'    => __( 'Set featured image', 'plugin-pokemon' ),
+			'remove_featured_image' => __( 'Remove featured image', 'plugin-pokemon' ),
+			'use_featured_image'    => __( 'Use as featured image', 'plugin-pokemon' ),
+			'insert_into_item'      => __( 'Insert into pokémon', 'plugin-pokemon' ),
+			'uploaded_to_this_item' => __( 'Uploaded to this pokémon', 'plugin-pokemon' ),
+			'items_list'            => __( 'Pokémon list', 'plugin-pokemon' ),
+			'items_list_navigation' => __( 'Pokémon list navigation', 'plugin-pokemon' ),
+			'filter_items_list'     => __( 'Filter pokémon list', 'plugin-pokemon' ),
+		);
+
+		$rewrite = array(
+			'slug'                  => 'pokemon',
+			'with_front'            => true,
+			'pages'                 => true,
+			'feeds'                 => true,
+		);
+
+		$args = array(
+			'label'                 => __( 'Pokémon', 'plugin-pokemon' ),
+			'description'           => __( 'Individual pokémon to fill out a pokédex.', 'plugin-pokemon' ),
+			'labels'                => $labels,
+			'supports'              => array( 'title', 'editor', 'thumbnail', 'revisions', 'custom-fields' ),
+			'taxonomies'            => array( 'pokemon_type' ),
+			'hierarchical'          => false,
+			'public'                => true,
+			'show_ui'               => true,
+			'show_in_menu'          => true,
+			'menu_position'         => 5,
+			'menu_icon'             => 'data:image/svg+xml;base64,' . base64_encode( $menu_icon ),
+			'show_in_admin_bar'     => true,
+			'show_in_nav_menus'     => true,
+			'can_export'            => true,
+			'has_archive'           => 'pokemon',
+			'exclude_from_search'   => false,
+			'publicly_queryable'    => true,
+			'query_var'             => 'pokemon',
+			'rewrite'               => $rewrite,
+			'capability_type'       => 'post',
+			'show_in_rest'          => true,
+			'rest_base'             => 'pokemon',
+			'rest_controller_class' => 'WP_REST_Posts_Controller',
+		);
+
+		register_post_type( 'pokemon', $args );
+	}
+
+	function register_pokemon_pokdex_number__old_meta() {
+		register_meta(
+			'post',
+			'_pokemon_pokdex_number__old',
+			[
+				'single' => true,
+				'type' => 'string',
+				'show_in_rest' => true
+			]
+		);
+	}
+
+	function register_pokemon_pokdex_number__new_meta() {
+		register_meta(
+			'post',
+			'_pokemon_pokdex_number__new',
+			[
+				'single' => true,
+				'type' => 'string',
+				'show_in_rest' => true
+			]
+		);
+	}
+
+	function register_pokemon_type_primary_meta() {
+		register_meta(
+			'post',
+			'_pokemon_type_primary',
+			[
+				'single' => true,
+				'type' => 'string',
+				'show_in_rest' => true
+			]
+		);
+	}
+
+	function register_pokemon_type_secondary_meta() {
+		register_meta(
+			'post',
+			'_pokemon_type_secondary',
+			[
+				'single' => true,
+				'type' => 'string',
+				'show_in_rest' => true
+			]
+		);
+	}
+
+	function register_pokemon_weight_meta() {
+		register_meta(
+			'post',
+			'_pokemon_weight',
+			[
+				'single' => true,
+				'type' => 'string',
+				'show_in_rest' => true
+			]
+		);
+	}
+
+
+	/**
+	 * Save the meta when the post is saved.
+	 *
+	 * @todo Secure with nonce.
+	 *
+	 * @param int     $post_id Post ID.
+	 * @return null
+	 */
+	public function save_pokemon( $post_id ) {
+		// Do nothing on autosave.
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return $post_id;
+
+		// Abort early if a nonce is not set.
+		// if ( ! isset( $_POST['plugin_pokemon_type_meta_box_nonce'] ) ) {
+		// 	$output = "<pre>" . print_r($_POST, true) . "</pre>";
+		// 	wp_die("NONCE IS NOT SET" . $output);
+		// 	return $post_id;
+		// }
+
+		// $nonce = $_POST['plugin_pokemon_type_meta_box_nonce'];
+
+		// Abort early if the nonce is not valid.
+		// if ( ! wp_verify_nonce( $nonce, plugin_basename( __FILE__ ) ) ) {
+		// 	wp_die("CANNOT VERIFY NONCE");
+		// 	return $post_id;
+		// }
+
+		// Check the user's permissions.
+		// if ( 'pokemon' == $_POST['post_type'] ) {
+		// 	if ( ! current_user_can( 'edit_page', $post_id ) ) {
+		// 		return $post_id;
+		// 	}
+		// } else {
+		// 	if ( ! current_user_can( 'edit_post', $post_id ) ) {
+		// 		return $post_id;
+		// 	}
+		// }
+
+		// Sanitize the user input.
+		/** @todo Use a more precise santize. */
+		if ( isset($_POST['pokemon_pokdex_number__old']) ) {
+			$pokemon_pokdex_number__old = sanitize_text_field( $_POST['pokemon_pokdex_number__old'] );
+			update_post_meta( $post_id, '_pokemon_pokdex_number__old', $pokemon_pokdex_number__old );
+		}
+
+		if ( isset($_POST['pokemon_pokdex_number__new']) ) {
+			$pokemon_pokdex_number__new = sanitize_text_field( $_POST['pokemon_pokdex_number__new'] );
+			update_post_meta( $post_id, '_pokemon_pokdex_number__new', $pokemon_pokdex_number__new );
+		}
+
+		if ( isset($_POST['pokemon-type__primary']) ) {
+			$pokemon_type_primary   = sanitize_text_field( $_POST['pokemon-type__primary'] );
+			update_post_meta( $post_id, '_pokemon_type_primary',   $pokemon_type_primary );
+		}
+
+		if ( isset($_POST['pokemon-type__secondary']) ) {
+			$pokemon_type_secondary = sanitize_text_field( $_POST['pokemon-type__secondary'] );
+			update_post_meta( $post_id, '_pokemon_type_secondary', $pokemon_type_secondary );
+		}
+
+		if ( isset($_POST['pokemon_weight']) ) {
+			$pokemon_weight = sanitize_text_field( $_POST['pokemon_weight'] );
+			update_post_meta( $post_id, '_pokemon_weight', $pokemon_weight );
+		}
+	}
+
+	/**
+	 * Render Pokédex meta box content.
+	 *
+	 * @param WP_Post $post The post object.
+	 */
+	public function render_pokemon_pokedex_meta_box_content( $post ) {
+		// Add an nonce field so we can check for it later.
+		wp_nonce_field( plugin_basename( __FILE__ ), 'plugin_pokemon_pokedex_meta_box_nonce' );
+
+		// Get current values from WordPress.
+		$pokemon_pokdex_number__old_current_value = get_post_meta( $post->ID, '_pokemon_pokdex_number__old', true );
+		$pokemon_pokdex_number__new_current_value = get_post_meta( $post->ID, '_pokemon_pokdex_number__new', true );
+		?>
+		<label for="pokemon_pokdex_number__old"><?php _e( 'Pokédex Number (Old)', 'plugin-pokemon' ); ?></label>
+		<input type="number" name="pokemon_pokdex_number__old" id="pokemon_pokdex_number__old" min="0" value="<?php echo $pokemon_pokdex_number__old_current_value; ?>" />
+
+		<label for="pokemon_pokdex_number__new"><?php _e( 'Pokédex Number (New)', 'plugin-pokemon' ); ?></label>
+		<input type="number" name="pokemon_pokdex_number__new" id="pokemon_pokdex_number__new" min="0" value="<?php echo $pokemon_pokdex_number__new_current_value; ?>" />
+		<?php
+	}
+
+	/**
+	 * Render Pokémon Type meta box content.
+	 *
+	 * @param WP_Post $post The post object.
+	 */
+	public function render_pokemon_type_meta_box_content( $post ) {
+		// Add an nonce field so we can check for it later.
+		wp_nonce_field( plugin_basename( __FILE__ ), 'plugin_pokemon_type_meta_box_nonce' );
+
+		// Get current values from WordPress.
+		$pokemon_type_primary_current_value = get_post_meta( $post->ID, '_pokemon_type_primary',   true );
+		$pokemon_type_secondary_current_value = get_post_meta( $post->ID, '_pokemon_type_secondary', true );
+
+		// Display the form, using the current value.
+		?>
+		<label for="pokemon-type__primary"><?php _e( 'Primary type', 'plugin-pokemon' ); ?></label>
+		<select name="pokemon-type__primary" id="pokemon-type__primary" class="postbox" required="required">
+			<option value=""><?php _e('Select primary type', 'plugin-pokemon' ); ?></option>
+			<?php
+			foreach (self::$pokemon_types as $value => $label) :
+			$selected = ($pokemon_type_primary_current_value == $value ) ? 'selected' : '';
+				?>
+				<option value="<?php echo $value; ?>" <?php echo $selected; ?>><?php echo $label; ?></option>
+			<?php endforeach; ?>
+		</select>
+
+		<label for="pokemon-type__secondary"><?php _e( 'Secondary type (optional)', 'plugin-pokemon' ); ?></label>
+		<select name="pokemon-type__secondary" id="pokemon-type__secondary" class="postbox">
+			<option value=""><?php _e('Select secondary type', 'plugin-pokemon' ); ?></option>
+			<?php
+			foreach (self::$pokemon_types as $value => $label) :
+			$selected = ($pokemon_type_secondary_current_value == $value ) ? 'selected' : '';
+			?>
+				<option value="<?php echo $value; ?>" <?php echo $selected; ?>><?php echo $label; ?></option>
+			<?php endforeach; ?>
+		</select>
+		<?php
+	}
+
+	/**
+	 * Render Pokémon Stats meta box content.
+	 *
+	 * @param WP_Post $post The post object.
+	 */
+	public function render_pokemon_stats_meta_box_content( $post ) {
+		// Add an nonce field so we can check for it later.
+		wp_nonce_field( plugin_basename( __FILE__ ), 'plugin_pokemon_stats_meta_box_nonce' );
+
+		// Get current values from WordPress.
+		$pokemon_weight_current_value = get_post_meta( $post->ID, '_pokemon_weight', true );
+		?>
+		<label for="pokemon_weight"><?php _e( 'Weight', 'plugin-pokemon' ); ?></label>
+		<input type="number" name="pokemon_weight" id="pokemon_weight" min="0" value="<?php echo $pokemon_weight_current_value; ?>" />
+		<?php
+	}
+
+	/**
+	 * Activate the plugin.
+	 */
+	private static function activate() {
+		self::register_post_type_pokemon();
+		flush_rewrite_rules();
+	}
+
+	/**
+	 * Deactivate the plugin.
+	 */
+	private static function deactivate() {
+		unregister_post_type( 'pokemon' );
+		flush_rewrite_rules();
+	}
+}
+
+$Plugin_Pokedex = Plugin_Pokedex::get_instance();
